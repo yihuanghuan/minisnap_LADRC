@@ -47,6 +47,9 @@ class TrajectoryNode(Node):
         self._trajectory_duration = t_wp[-1]
         self.get_logger().info(f"Trajectory initialized with duration: {self._trajectory_duration} seconds.")
 
+        self._hover_duration = 15.0
+        self.get_logger().info(f"Waiting {self._hover_duration}s for controller takeoff...")
+
         self._start_ns = self.get_clock().now().nanoseconds
         self._log_counter = 0
         update_hz = 100.0
@@ -55,11 +58,18 @@ class TrajectoryNode(Node):
     def _on_timer(self) -> None:
         t_elapsed = (self.get_clock().now().nanoseconds - self._start_ns) * 1e-9
 
-        # [修改] 使用模运算 (modulo) 来循环轨迹
-        if self._trajectory_duration > 0:
-            t_now = t_elapsed % self._trajectory_duration
+        # [修改] “悬停起飞，然后执行” 逻辑
+        if t_elapsed < self._hover_duration:
+            # 阶段 1: 正在悬停。控制器正在起飞。
+            # 始终发送 t=0 (即 [0,0,-2]) 的指令
+            t_now = 0.0
         else:
-            t_now = 0.0 # 避免除以零
+            # 阶段 2: 起飞完成。开始8字轨迹。
+            t_mission = t_elapsed - self._hover_duration
+            if self._trajectory_duration > 0:
+                t_now = t_mission % self._trajectory_duration
+            else:
+                t_now = 0.0 # 避免除以零
 
         pos, vel, acc, _, _ = self._xyz_traj.eval(t_now)
         yaw, _, _ = self._yaw_traj.eval(t_now, des_pos=pos, curr_pos=self._curr_pos)
@@ -73,7 +83,7 @@ class TrajectoryNode(Node):
         self._log_counter += 1
         # 因为 update_hz = 100.0, 所以我们需要计数到 100
         if self._log_counter >= 100: 
-            self.get_logger().info(f"Planner publishing commands: position={pos.round(3)}, attitude={target_rpy.round(3)}")
+            # self.get_logger().info(f"Planner publishing commands: position={pos.round(3)}, attitude={target_rpy.round(3)}")
             self._log_counter = 0
 
     def _rpy_cb(self, msg: Vector3Stamped) -> None:
